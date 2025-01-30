@@ -19,7 +19,7 @@ uint8_t lowpower=1;
 #define SCK GPIO6
 HX711 scale;
 
-float calibration_factor = 1.966;
+float calibration_factor = -1.966;
 float units;
 float ounces;
 float pounds;
@@ -326,7 +326,7 @@ void loop() {
   // Peak Detection Compulation
 
   // Standard Deviation Calculation (Interdistance between array elements)
-  float std_dev = calculateStandardDeviation(window, 10);
+  // float std_dev = calculateStandardDeviation(window, 10);
   // Serial.print("Standard Deviation: ");
   // Serial.println(std_dev);
 
