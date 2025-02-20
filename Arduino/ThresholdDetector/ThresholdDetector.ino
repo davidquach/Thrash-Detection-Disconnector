@@ -15,30 +15,35 @@ static TimerEvent_t wakeUp;
 uint8_t lowpower=1;
 
 // HX711 declarations
-#define DOUT GPIO5
-#define SCK GPIO6
+// #define DOUT GPIO5
+// #define SCK GPIO6
+#define DOUT GPIO8
+#define SCK GPIO9
 HX711 scale;
 
 float calibration_factor = -1.966;
+// float calibration_factor = 10.0;
 float units;
 float ounces;
 float pounds;
 
 // Button pins
-int resetButton = GPIO2;
-int menueButton1 = GPIO3;
-int menueButton2 = GPIO4;
-int menueButton3 = GPIO7;
+int resetButton = GPIO1;
+int menueButton1 = GPIO2;
+int menueButton2 = GPIO3;
+int menueButton3 = GPIO4;
 
 // LED pins
-int ledPin = GPIO8;
-int flashLed = GPIO9;
-int rgbLed1 = GPIO13;
-int rgbLed2 = GPIO14;
-int rgbLed3 = GPIO1;
+int ledPin = GPIO11;
+int flashLed = GPIO12;
+// int rgbLed1 = GPIO8;
+// int rgbLed2 = GPIO9;
+int rgbLed1 = GPIO5;
+int rgbLed2 = GPIO6;
+int rgbLed3 = GPIO7;
 
 // Constants and flags
-int threshold = 20;
+int threshold = 50;
 int maxValues = 5;
 int flag = 0;
 
@@ -56,11 +61,17 @@ unsigned long lastDebounceMenuConfirm = 0;
 
 // Display Global Variables
 int battery = 0;
+int peakCnt = 0;
+
+// Timer 
+unsigned long peakTimer = 0;  // Stores the last peak time
+const unsigned long countdownTime = 20000;  // 20 seconds
+bool timerActive = false;  // Flag for active timer
 
 // OLED setup
 SSD1306Wire display(0x3c, 500000, SDA, SCL, GEOMETRY_128_64, GPIO10);
 unsigned long lastOLEDUpdate = 0;
-unsigned long oledUpdateInterval = 10; // 1/4-second interval for OLED update
+unsigned long oledUpdateInterval = 50; // 1/4-second interval for OLED update
 
 // data logging struct
 struct logEntry {
@@ -82,35 +93,24 @@ void displayBootScreen() {
 // low power functions
 void onSleep()
 {
-  // Serial.printf("Going into lowpower mode, %d ms later wake up.\r\n",timetillwakeup);
   lowpower=1;
-  //timetillwakeup ms later wake up;
   TimerSetValue( &wakeUp, timetillwakeup );
   TimerStart( &wakeUp );
 }
 void onWakeUp()
 {
-  // Serial.printf("Woke up, %d ms later into lowpower mode.\r\n",timetillsleep);
   lowpower=0;
-  //timetillsleep ms later into lowpower mode;
   TimerSetValue( &sleep, timetillsleep );
   TimerStart( &sleep );
 }
 
 void setup() {
     Serial.begin(9600);
-    // Serial.println("HX711 Test");
     scale.begin(DOUT, SCK, 128);
     scale.set_scale(calibration_factor);
+    scale.set_gain(64);
     scale.tare();
     delay(500);
-
-    // if (scale.is_ready()) {
-    //     Serial.println("HX711 is ready.");
-    // } else {
-    //     Serial.println("HX711 not found. Check wiring or pin configuration.");
-    //     while (1);
-    // }
 
     // Initialize buttons with interrupts
     pinMode(resetButton, INPUT_PULLUP);
@@ -148,9 +148,9 @@ void displayStrain() {
     display.setTextAlignment(TEXT_ALIGN_LEFT);
 
     // Get strain gauge readings
-    float strainUnits = scale.get_units(10); // Adjust number of samples as needed
+    double strainUnits = scale.get_units(5); // Adjust number of samples as needed
     if (strainUnits < 0) strainUnits = 0.0;  // Ensure no negative values
-    float strainOunces = strainUnits * 0.035274 / 100;
+    double strainOunces = strainUnits * 0.035274 / 100;
     
     display.setFont(ArialMT_Plain_10);
     display.drawString(0, 0, "Strain Reading:");
@@ -196,42 +196,17 @@ Screen screens[] = {displayStrain, drawConfig};
 int screenLength = (sizeof(screens) / sizeof(Screen));
 
 // Windowing 
-float window[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};  // Fixed size of 10
+int window_size = 5;
+float window[5] = {0, 0, 0, 0, 0};  
 
 //------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 bool isPeak(int index) {
     if (index == 0 || index == 9) {
-        // First or last element cannot be a peak because they don't have both neighbors
         return false;
     }
 
-    // Check if current value is greater than both neighbors by more than the threshold
     return (window[index] > window[index - 1] + threshold && window[index] > window[index + 1] + threshold);
-}
-
-float calculateStandardDeviation(float data[], int size) {
-  float sum = 0.0, mean, variance = 0.0, std_deviation;
-
-  // Calculate the sum of the data elements
-  for (int i = 0; i < size; i++) {
-    sum += data[i];
-  }
-
-  // Calculate the mean
-  mean = sum / size;
-
-  // Calculate the variance
-  for (int i = 0; i < size; i++) {
-    variance += pow(data[i] - mean, 2);
-  }
-
-  variance /= size; // For population standard deviation
-  
-  // Calculate the standard deviation
-  std_deviation = sqrt(variance);
-
-  return std_deviation;
 }
 
 void loop() {
@@ -250,7 +225,6 @@ void loop() {
   if (resetPressed) {
     resetPressed = false;
     digitalWrite(ledPin, HIGH);
-    // Serial.println("Reset button pressed");
     scale.tare();
     flag = 0;
     delay(500);
@@ -259,7 +233,6 @@ void loop() {
 
   if (menuBackPressed) {
     menuBackPressed = false;
-    // Serial.println("Menu Back");
     digitalWrite(rgbLed1, LOW);
     digitalWrite(rgbLed2, LOW);
     digitalWrite(rgbLed3, HIGH);
@@ -269,7 +242,6 @@ void loop() {
 
   if (menuForwardPressed) {
     menuForwardPressed = false;
-    // Serial.println("Menu Forward");
     digitalWrite(rgbLed1, HIGH);
     digitalWrite(rgbLed2, LOW);
     digitalWrite(rgbLed3, LOW);
@@ -279,7 +251,6 @@ void loop() {
 
   if (menuConfirmPressed) {
     menuConfirmPressed = false;
-    // Serial.println("Menu Confirm");
     digitalWrite(rgbLed1, LOW);
     digitalWrite(rgbLed2, HIGH);
     digitalWrite(rgbLed3, LOW);
@@ -288,13 +259,22 @@ void loop() {
   }
 
   // Read HX711 scale values
-  units = scale.get_units(10);
-  ounces = abs(units * 0.035274) / 100;
-  Serial.print("Ounces: ");
-  Serial.println(ounces);
-  Serial.print("Units: ");
-  Serial.println(units);
+  // units = scale.get_units(1);
+  // ounces = abs(units * 0.035274) / 100;
 
+  units = scale.get_units(5);
+  ounces = abs(units * 0.035274 / 100);
+
+  // Serial.print("Ounces: ");
+  Serial.println(ounces);
+  // Serial.print("Raw: ");
+  // Serial.println(scale.read());
+  // Serial.print("Units: ");
+  // Serial.println(units);
+  // Serial.print("Value: ");
+  // Serial.println(scale.get_value(1));
+  // Serial.println("");
+  
 
   if (Serial.available() > 0) {
     String inputString = Serial.readStringUntil('\n');  // Read input from the serial buffer
@@ -315,39 +295,49 @@ void loop() {
     }
   }
 
-
   //Shift Window
-  for (int i = 10 - 1; i > 0; i--) {
+  for (int i = window_size - 1; i > 0; i--) {
         window[i] = window[i - 1];
     }
   
   window[0] = ounces;
 
   // Peak Detection Compulation
+    if (isPeak(1)) {
+        peakCnt += 1;
+        peakTimer = millis();  // Reset timer when peak is detected
+        timerActive = true;  // Start the countdown
+        
+        
+        // {p}{peak #}{peak in oz}
+        Serial.print("p");
+        Serial.print(peakCnt);
+        Serial.println(window[1]);      
+    }
 
-  // Standard Deviation Calculation (Interdistance between array elements)
-  // float std_dev = calculateStandardDeviation(window, 10);
-  // Serial.print("Standard Deviation: ");
-  // Serial.println(std_dev);
+  //   // Timer logic
+    if (timerActive) {
+        unsigned long timeLeft = (countdownTime - (millis() - peakTimer)) / 1000;
+        
+        if (millis() - peakTimer >= countdownTime) {
+            Serial.println("pz");
+            peakCnt = 0;
+            timerActive = false;  // Stop the countdown
+            
+        } 
+        // else {
+        //     Serial.print("Time remaining: ");
+        //     Serial.print(timeLeft);
+        //     Serial.println(" seconds");
+        // }
+    }
 
-  // for (int i = 1; i < 10; i++) { // Skip first and last elements
-  //       if (isPeak(i)) {
-  //           // Peak detected at index i
-  //           Serial.print("Peak detected at index: ");
-  //           Serial.println(i);
-  //       }
-  //   }
-
-  // Serial.print("[");
-  //   for (int i = 0; i < 10; i++) {
-  //       Serial.print(window[i], 2);  // Print each value with 2 decimal places (if needed)
-  //       if (i < 10 - 1) {
-  //           Serial.print(", ");
-  //       }
-  //   }
-  // Serial.println("]");
-
+  if (peakCnt == 3) {
+    peakCnt = 0; // Reset Peak Count  
+    Serial.println("px");
+  }
 }
+
 
 void ledFlash() {
   for (int i = 0; i < 5; i++) {
