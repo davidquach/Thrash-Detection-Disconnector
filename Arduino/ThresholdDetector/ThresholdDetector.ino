@@ -5,47 +5,45 @@
 
 // low power libraries
 #include "Arduino.h"
-//#include "LoRa_APP.h"
 
 // low power constants
-#define timetillsleep 10000
-#define timetillwakeup 500
+#define timetillsleep 30000
+#define timetillwakeup 5000
 static TimerEvent_t sleep;
 static TimerEvent_t wakeUp;
 uint8_t lowpower=1;
 
 // HX711 declarations
-// #define DOUT GPIO5
-// #define SCK GPIO6
-#define DOUT GPIO8
-#define SCK GPIO9
+#define DOUT GPIO13
+#define SCK GPIO14
+// #define DOUT GPIO12
+// #define SCK GPIO13
 HX711 scale;
 
-float calibration_factor = -1.966;
-// float calibration_factor = 10.0;
+float calibration_factor = -0.0433;
 float units;
 float ounces;
 float pounds;
 
 // Button pins
-int resetButton = GPIO1;
-int menueButton1 = GPIO2;
-int menueButton2 = GPIO3;
-int menueButton3 = GPIO4;
+int resetButton = GPIO4;
+int menueButton1 = GPIO3;
+int menueButton2 = GPIO2;
+int menueButton3 = GPIO1;
 
 // LED pins
-int ledPin = GPIO11;
-int flashLed = GPIO12;
-// int rgbLed1 = GPIO8;
-// int rgbLed2 = GPIO9;
+int ledPin = GPIO8;
+int flashLed = GPIO9;
 int rgbLed1 = GPIO5;
 int rgbLed2 = GPIO6;
 int rgbLed3 = GPIO7;
 
 // Constants and flags
-int threshold = 50;
+int threshold = 10;
 int maxValues = 5;
 int flag = 0;
+
+bool peakActive = false;
 
 // Button state flags
 volatile bool resetPressed = false;
@@ -58,6 +56,9 @@ unsigned long lastDebounceReset = 0;
 unsigned long lastDebounceMenuBack = 0;
 unsigned long lastDebounceMenuForward = 0;
 unsigned long lastDebounceMenuConfirm = 0;
+
+unsigned long lastSampleTime = 0;
+unsigned long sampleInterval = 500; // Delay between samples
 
 // Display Global Variables
 int battery = 0;
@@ -86,29 +87,45 @@ void displayBootScreen() {
     display.drawString(display.getWidth() / 2, 5, "Nova");
     display.drawString(display.getWidth() / 2, 25, "Robotics");
     display.display();
-    delay(1000); // Display boot screen for 3 seconds
+    delay(100); 
     display.clear();
 }
 
 // low power functions
 void onSleep()
 {
+  if (timerActive) {
+    // If a peak has been detected, do not allow sleep
+    Serial.println("Peak detected, skipping sleep");
+    TimerSetValue(&sleep, timetillsleep); // Reset sleep timer
+    TimerStart(&sleep);
+    return;
+  }
+
+  Serial.println("LP");
   lowpower=1;
+  //timetillwakeup ms later wake up;  
   TimerSetValue( &wakeUp, timetillwakeup );
   TimerStart( &wakeUp );
 }
+
 void onWakeUp()
 {
+  Serial.println("WU");
   lowpower=0;
+  //timetillsleep ms later into lowpower mode;
   TimerSetValue( &sleep, timetillsleep );
   TimerStart( &sleep );
 }
+
+
 
 void setup() {
     Serial.begin(9600);
     scale.begin(DOUT, SCK, 128);
     scale.set_scale(calibration_factor);
     scale.set_gain(64);
+    //scale.set_gain(128);
     scale.tare();
     delay(500);
 
@@ -133,11 +150,9 @@ void setup() {
     display.init();
     displayBootScreen();
 
-  // low power setup
-  //Radio.Sleep( );
-  TimerInit( &sleep, onSleep );
-  TimerInit( &wakeUp, onWakeUp );
-  onSleep();
+    TimerInit( &sleep, onSleep );
+    TimerInit( &wakeUp, onWakeUp );
+    onSleep();
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -147,18 +162,12 @@ void displayStrain() {
     display.clear();
     display.setTextAlignment(TEXT_ALIGN_LEFT);
 
-    // Get strain gauge readings
-    double strainUnits = scale.get_units(5); // Adjust number of samples as needed
-    if (strainUnits < 0) strainUnits = 0.0;  // Ensure no negative values
-    double strainOunces = strainUnits * 0.035274 / 100;
-    
     display.setFont(ArialMT_Plain_10);
     display.drawString(0, 0, "Strain Reading:");
-    display.drawString(0, 12, String(strainUnits, 2) + " units");
-    display.drawString(0, 24, String(strainOunces, 2) + " oz");
-    display.drawString(0, 36, "Threshold : " + String(threshold));   // Adjust Y value as needed
-    display.drawString(0, 48, "Calibration : " + String(calibration_factor));   // Adjust Y value as needed
-
+    display.drawString(0, 12, String(ounces, 2) + " units");
+    display.drawString(0, 24, String(units, 2) + " oz");
+    display.drawString(0, 36, "Threshold : " + String(threshold));
+    display.drawString(0, 48, "Calibration : " + String(calibration_factor));
 
     // Peak Detection
     for(int i = 0; i < flag && i < 5; i++) {
@@ -205,7 +214,6 @@ bool isPeak(int index) {
     if (index == 0 || index == 9) {
         return false;
     }
-
     return (window[index] > window[index - 1] + threshold && window[index] > window[index + 1] + threshold);
 }
 
@@ -213,6 +221,19 @@ void loop() {
 
   if(lowpower){
     lowPowerHandler();
+  }
+
+  if (millis() - lastSampleTime >= sampleInterval) {
+    units = scale.get_units(1);
+    ounces = abs(units * 0.035274 / 100);
+    Serial.println(ounces);
+
+    for (int i = window_size - 1; i > 0; i--) {
+          window[i] = window[i - 1];
+    }
+    window[0] = ounces;
+
+    lastSampleTime = millis();  // Update last sample time
   }
 
   // Non-blocking OLED updates
@@ -258,86 +279,73 @@ void loop() {
     digitalWrite(rgbLed2, LOW);
   }
 
-  // Read HX711 scale values
-  // units = scale.get_units(1);
-  // ounces = abs(units * 0.035274) / 100;
-
-  units = scale.get_units(5);
-  ounces = abs(units * 0.035274 / 100);
-
-  // Serial.print("Ounces: ");
-  Serial.println(ounces);
-  // Serial.print("Raw: ");
-  // Serial.println(scale.read());
-  // Serial.print("Units: ");
-  // Serial.println(units);
-  // Serial.print("Value: ");
-  // Serial.println(scale.get_value(1));
-  // Serial.println("");
   
-
+  if (flag > 5){
+    ledFlash();
+    flag = 0;
+  }
+  
   if (Serial.available() > 0) {
-    String inputString = Serial.readStringUntil('\n');  // Read input from the serial buffer
-    inputString.trim();  // Remove leading/trailing spaces
+    String inputString = Serial.readStringUntil('\n');
+    inputString.trim();
+
+    if (inputString == "S") {
+      sampleInterval += 100;
+    }
+    else if (inputString == "D") {
+      sampleInterval = sampleInterval - 100;
+    }
+
 
     if (inputString.length() > 1) {
-      char identifier = inputString.charAt(0);  // First character tells us if it's threshold or calibration
-      String valueString = inputString.substring(1);  // The remaining part is the value
-      int receivedValue = valueString.toInt();  // Convert value to integer
+      char identifier = inputString.charAt(0);
+      String valueString = inputString.substring(1);
+      float receivedValue = valueString.toFloat();
 
-      if (receivedValue > 0) {  // Ensure the value is positive
+
+      if (receivedValue != 0.0 || valueString == "0") {
         if (identifier == 'T') {
           threshold = receivedValue;
         } else if (identifier == 'C') {
           calibration_factor = receivedValue;
+          scale.set_scale(calibration_factor);
         }
       }
     }
   }
 
-  //Shift Window
-  for (int i = window_size - 1; i > 0; i--) {
-        window[i] = window[i - 1];
-    }
-  
-  window[0] = ounces;
 
-  // Peak Detection Compulation
-    if (isPeak(1)) {
-        peakCnt += 1;
-        peakTimer = millis();  // Reset timer when peak is detected
-        timerActive = true;  // Start the countdown
-        
-        
-        // {p}{peak #}{peak in oz}
-        Serial.print("p");
-        Serial.print(peakCnt);
-        Serial.println(window[1]);      
-    }
+  // Peak Detection Computation
+  if (isPeak(1)) {
+      sampleInterval = 0;
+      peakCnt += 1;
+      peakTimer = millis();  // Reset timer when peak is detected
+      timerActive = true;  // Start the countdown
 
-  //   // Timer logic
-    if (timerActive) {
-        unsigned long timeLeft = (countdownTime - (millis() - peakTimer)) / 1000;
-        
-        if (millis() - peakTimer >= countdownTime) {
-            Serial.println("pz");
-            peakCnt = 0;
-            timerActive = false;  // Stop the countdown
-            
-        } 
-        // else {
-        //     Serial.print("Time remaining: ");
-        //     Serial.print(timeLeft);
-        //     Serial.println(" seconds");
-        // }
-    }
+      Serial.print("p");
+      Serial.print(peakCnt);
+      Serial.println(window[1]);
+  }
+
+  // Timer logic
+  if (timerActive) {
+      unsigned long timeLeft = (countdownTime - (millis() - peakTimer)) / 1000;
+
+      if (millis() - peakTimer >= countdownTime) {
+          Serial.println("pz");
+          sampleInterval = 500;
+          peakCnt = 0;
+          timerActive = false;
+      } 
+  }
 
   if (peakCnt == 3) {
-    peakCnt = 0; // Reset Peak Count  
+    sampleInterval = 500;
+    peakCnt = 0;  // Reset Peak Count  
     Serial.println("px");
+    delay(2000); // Delay
   }
 }
-
 
 void ledFlash() {
   for (int i = 0; i < 5; i++) {

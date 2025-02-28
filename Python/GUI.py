@@ -1,198 +1,227 @@
 import time
 import serial
+import serial.tools.list_ports
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import tkinter as tk
-from tkinter import Tk, Label, Frame
+from tkinter import Tk, Label, Frame, ttk
 
+# Global Variables
 ylim = 100
 curr = 0
-ser = None  # Declare global serial variable
+ser = None  # Global serial variable
 latest_peak = None  # Store the latest peak value
 persistent_lines = []  # Store all persistent peak lines
+dataList = []  # Data list for animation
+
+# Serial Communication Functions
+def get_available_ports():
+    """ Returns a list of available COM ports """
+    return [port.device for port in serial.tools.list_ports.comports()]
+
+def select_port(event):
+    """ Select and open the serial port """
+    global ser
+    selected_port = com_port_var.get()
+    try:
+        if ser and ser.is_open:
+            ser.close()
+        ser = serial.Serial(selected_port, 9600, timeout=1)
+        time.sleep(2)
+        serial_status_label.config(text=f"{selected_port} Active", fg="green")
+    except serial.SerialException:
+        serial_status_label.config(text=f"{selected_port} Inactive", fg="red")
+        ser = None
 
 def animate(frame, dataList, ax, label):
+    """ Animation function to update plot with serial data """
     global ser, latest_peak, persistent_lines
     try:
         if ser and ser.is_open and ser.in_waiting:
             arduinoData_bytes = ser.readline()
             try:
                 arduinoData_string = arduinoData_bytes.decode('utf-8', errors='ignore').strip()
-                label.config(text=f"Current Reading: {arduinoData_string}")
-                print(arduinoData_string)
-                # Handle normal tension values
                 if arduinoData_string.replace('.', '', 1).isdigit():
                     arduinoData_float = float(arduinoData_string)
+                    label.config(text=f"Current Reading: {arduinoData_float} oz")
                     dataList.append(arduinoData_float)
-                    curr = arduinoData_float
-
-                # Handle removing peak lines
                 elif arduinoData_string in ['px', 'pz']:
-                    for i in range(5):
-                        print("hello")
                     latest_peak = None
                     persistent_lines.clear()
-
-                # Handle peak messages
-                elif arduinoData_string.startswith('p'):                    
-                    if len(arduinoData_string) > 2:
-                        peak = arduinoData_string[2:]
-                        latest_peak = float(peak)  # Update latest_peak
-                        peak_cnt = arduinoData_string[1:]  # Extract peak count
-                        ax.axhline(y=latest_peak, color='r', linestyle='--', label=f"Peak {peak_cnt}: {latest_peak}")
-                        persistent_lines.append(latest_peak)  # Append the updated peak to persistent_lines
-                
-
+                elif arduinoData_string.startswith('p') and len(arduinoData_string) > 2:
+                    peak = float(arduinoData_string[2:])
+                    latest_peak = peak
+                    peak_cnt = arduinoData_string[1:]
+                    ax.axhline(y=latest_peak, color='r', linestyle='--', label=f"Peak {peak_cnt}: {latest_peak}")
+                    persistent_lines.append(latest_peak)
+                elif arduinoData_string == "LP":
+                    status_label.config(text="Status: Asleep", fg="red")
+                elif arduinoData_string == "WU":
+                    status_label.config(text="Status: Awake", fg="green")
             except ValueError:
                 pass
 
-        # Keep data limited to the last 50 points
+        # Update the plot with the latest data
         dataList = dataList[-50:]
-        
-        # Update the plot
         ax.clear()
         ax.plot(dataList)
         ax.set_ylim([0, ylim])
-        ax.set_title("Load Cell Data")
         ax.set_ylabel("Tension (oz)")
-
-        # Redraw persistent peak lines
         for index, peak in enumerate(persistent_lines):
             ax.axhline(y=peak, color='r', linestyle='--', label=f"Peak {index+1}: {peak}")
         if persistent_lines:
             ax.legend()
-
         return dataList
-
     except serial.SerialException:
-        ser = None
-        dataList.clear()
-        ax.clear()
-        ax.set_ylim([0, ylim])
-        ax.set_title("Load Cell Data")
-        ax.set_ylabel("Tension (oz)")
-        serial_status_label.config(text="COM7 Inactive", fg="red")
+        serial_status_label.config(text=f"{com_port_var.get()} Inactive", fg="red")
         return dataList
 
-
-
-
-def updateValue(entry_widget, label):
+# Data Control Functions
+def update_value(entry_widget, label):
+    """ Update the threshold or calibration value """
     global ser
     value = entry_widget.get()
-    if value.isdigit():
+    try:
+        value_float = float(value)
         command = f"T{value}" if label == "Threshold" else f"C{value}"
         if ser and ser.is_open:
             ser.write(command.encode('utf-8'))
             print(f"Sent {label}: {value}")
-    else:
+    except ValueError:
         print(f"Invalid input for {label}. Please enter a valid number.")
 
-def clearPlotData(dataList, ax):
+def clear_plot_data(dataList, ax):
+    """ Clears the plot data and resets persistent lines """
+    global persistent_lines, latest_peak
     dataList.clear()
+    persistent_lines.clear()
+    latest_peak = None
     ax.clear()
-    ax.set_ylim([0, 2000])
+    ax.set_ylim([0, ylim])
     ax.set_title("Load Cell Data")
     ax.set_ylabel("Tension (oz)")
     canvas.draw()
 
-def check_serial_connection():
-    global ser
-    try:
-        if ser is None or not ser.is_open:
-            ser = serial.Serial("COM7", 9600, timeout=1)
-            time.sleep(2)
-            serial_status_label.config(text="COM7 Active", fg="green")
-    except serial.SerialException:
-        if ser and ser.is_open:
-            ser.close()
-        serial_status_label.config(text="COM7 Inactive", fg="red")
-        ser = None
-    root.after(1000, check_serial_connection)
-
 def plt_increase():
+    """ Increase the plot's y-axis limit """
     global ylim
-    ylim += 10
+    ylim += 50
     ax.set_ylim([0, ylim])
     canvas.draw()
 
 def plt_decrease():
+    """ Decrease the plot's y-axis limit """
     global ylim
-    ylim = max(0, ylim - 10)
+    ylim = max(0, ylim - 50)
     ax.set_ylim([0, ylim])
     canvas.draw()
 
-# Create Tkinter window
-root = Tk()
-root.title('Thrash Detection Disconnector GUI')
+# UI Update Functions
+def refresh_ports():
+    """ Refresh the list of available COM ports """
+    available_ports = get_available_ports()
+    com_port_dropdown['values'] = available_ports
+    if available_ports:
+        com_port_var.set(available_ports[0])  # Set default to first available port
+        select_port(None)  # Automatically select and open the first port
+    else:
+        com_port_var.set("")  # Clear selection if no ports are available
+        serial_status_label.config(text="No COM Ports Found", fg="red")
 
-# Frame for Controls
-controls_frame = Frame(root)
-controls_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
+# Tkinter UI Setup
+def create_ui():
+    """ Create and configure the Tkinter UI """
+    global root, com_port_var, serial_status_label, label, status_label, canvas, ax
 
-# Threshold Controls
-threshold_label = tk.Label(controls_frame, text="Threshold:")
-threshold_label.grid(row=0, column=0, padx=5)
-threshold_value = tk.Entry(controls_frame, width=12)
-threshold_value.grid(row=0, column=1, padx=5)
-threshold_Send = tk.Button(controls_frame, text="Set Threshold", command=lambda: updateValue(threshold_value, "Threshold"))
-threshold_Send.grid(row=0, column=2, padx=5, sticky="ew")
+    # Create Tkinter window
+    root = Tk()
+    root.title('Thrash Detection Disconnector GUI')
 
-# Calibration Controls
-calibration_label = tk.Label(controls_frame, text="Calibration:")
-calibration_label.grid(row=1, column=0, padx=5)
-calibration_value = tk.Entry(controls_frame, width=12)
-calibration_value.grid(row=1, column=1, padx=5)
-calibration_Send = tk.Button(controls_frame, text="Set Calibration", command=lambda: updateValue(calibration_value, "Calibration"))
-calibration_Send.grid(row=1, column=2, padx=5, sticky="ew")
+    # Configure Grid Layout
+    root.grid_rowconfigure(0, weight=1)  # Allow plot to expand
+    root.grid_columnconfigure(1, weight=3)  # Main frame for plot
+    root.grid_columnconfigure(0, weight=1)  # Sidebar frame for controls
 
-# Plot Control Buttons
-plot_controls_frame = Frame(root)
-plot_controls_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
+    # Frame for Controls (Sidebar)
+    controls_frame = Frame(root, bg='lightblue')  # Set background color
+    controls_frame.grid(row=0, column=0, sticky="ns", padx=10, pady=5)
 
-clear_button = tk.Button(plot_controls_frame, text="Clear Plot", command=lambda: clearPlotData(dataList, ax))
-clear_button.grid(row=0, column=0, padx=5, sticky="ew")
+    # Frame for Plot
+    plot_frame = Frame(root, bg='navy')  # Set background color
+    plot_frame.grid(row=0, column=1, sticky="ns", padx=10, pady=5)
 
-plt_decrease_button = tk.Button(plot_controls_frame, text="Zoom Out", command=plt_decrease)
-plt_decrease_button.grid(row=0, column=1, padx=5, sticky="ew")
+    # Serial Status Label
+    serial_status_label = Label(controls_frame, text="Select a COM Port", font=("Helvetica", 12))  # Set background color
+    serial_status_label.grid(row=4, column=0, columnspan=2, sticky="ew", pady=5)
 
-plt_increase_button = tk.Button(plot_controls_frame, text="Zoom In", command=plt_increase)
-plt_increase_button.grid(row=0, column=2, padx=5, sticky="ew")
+    # Dropdown for COM port selection
+    com_port_var = tk.StringVar()
+    available_ports = get_available_ports()
+    com_port_dropdown = ttk.Combobox(controls_frame, textvariable=com_port_var, values=available_ports, state="readonly")
+    com_port_dropdown.grid(row=0, column=0, padx=5)
+    com_port_dropdown.bind("<<ComboboxSelected>>", select_port)
 
-# Serial Status Label
-serial_status_label = Label(root, text="Checking COM7...", font=("Helvetica", 12))
-serial_status_label.grid(row=3, column=0, columnspan=2, sticky="ew", pady=5)
+    # Refresh Button
+    refresh_button = tk.Button(controls_frame, text="Refresh Ports", command=refresh_ports)
+    refresh_button.grid(row=0, column=1, padx=5, columnspan=2, sticky="ew")
 
-# Current Reading Label
-label = tk.Label(root, text=f"Current Reading: {curr}", font=("Helvetica", 12, "bold"))
-label.grid(row=4, column=0, columnspan=2, sticky="ew", pady=5)
+    # Call select_port after defining serial_status_label
+    if available_ports:
+        com_port_var.set(available_ports[0])
+        select_port(None)
 
-# Matplotlib Figure
-fig = plt.Figure(figsize=(5, 4), dpi=100)
-ax = fig.add_subplot(111)
+    # Threshold Controls
+    threshold_value = tk.Entry(controls_frame, width=12)
+    threshold_value.grid(row=1, column=0, padx=0)
+    threshold_Send = tk.Button(controls_frame, text="Set Threshold", command=lambda: update_value(threshold_value, "Threshold"))
+    threshold_Send.grid(row=1, column=1, columnspan=2, padx=0, sticky="ew")
 
-# Embed Plot in Tkinter
-canvas = FigureCanvasTkAgg(fig, root)
-canvas_widget = canvas.get_tk_widget()
-canvas_widget.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=10, pady=5)
+    # Calibration Controls
+    calibration_value = tk.Entry(controls_frame, width=12)
+    calibration_value.grid(row=2, column=0, padx=0)
+    calibration_Send = tk.Button(controls_frame, text="Set Calibration", command=lambda: update_value(calibration_value, "Calibration"))
+    calibration_Send.grid(row=2, column=1, columnspan=2, padx=0, sticky="ew")
 
-# Configure Grid Layout
-root.grid_rowconfigure(0, weight=1)  # Allow plot to expand
-root.grid_columnconfigure(0, weight=1)  # Allow resizing
+    # Plot Control Buttons
+    plot_controls_frame = Frame(root, bg='lightgreen')  # Set background color
+    plot_controls_frame.grid(row=2, column=1, columnspan=2, sticky="ew", padx=10, pady=5)
 
-# Data list for animation
-dataList = []
+    clear_button = tk.Button(controls_frame, text="Clear Plot", command=lambda: clear_plot_data(dataList, ax))
+    clear_button.grid(row=3, column=0, padx=5, sticky="ew")
 
-# Set up animation
-ani = animation.FuncAnimation(fig, animate, fargs=(dataList, ax, label), interval=100, save_count=50)
+    plt_decrease_button = tk.Button(controls_frame, text="Zoom In", command=plt_decrease)
+    plt_decrease_button.grid(row=3, column=1, padx=5, sticky="ew")
 
-# Start Serial Connection Check
-check_serial_connection()
+    plt_increase_button = tk.Button(controls_frame, text="Zoom Out", command=plt_increase)
+    plt_increase_button.grid(row=3, column=2, padx=5, sticky="ew")
 
-# Start Tkinter Main Loop
-root.mainloop()
+    # Current Reading Label
+    label = tk.Label(controls_frame, text=f"Current Reading: {curr}", font=("Helvetica", 12, "bold"), bg='lightyellow')  # Set background color
+    label.grid(row=5, column=0, columnspan=3, sticky="ew", pady=5)
 
-# Close Serial Port on Exit
-if ser is not None and ser.is_open:
-    ser.close()
+    # Device Status Label
+    status_label = Label(controls_frame, text="Status: Unknown", font=("Helvetica", 12, "bold"), fg="black", bg='lightyellow')  # Set background color
+    status_label.grid(row=6, column=0, columnspan=3, sticky="ew", pady=5)
+
+    # Matplotlib Figure
+    fig = plt.Figure(figsize=(5, 4), dpi=100)
+    ax = fig.add_subplot(111)
+
+    # Embed Plot in Tkinter
+    canvas = FigureCanvasTkAgg(fig, root)
+    canvas_widget = canvas.get_tk_widget()
+    canvas_widget.grid(row=0, column=1, sticky="nsew", padx=10, pady=5)
+
+    # Set up animation
+    ani = animation.FuncAnimation(fig, animate, fargs=(dataList, ax, label), interval=100, save_count=50)
+
+    # Start Tkinter Main Loop
+    root.mainloop()
+
+    # Close Serial Port on Exit
+    if ser is not None and ser.is_open:
+        ser.close()
+
+# Call to create the UI
+create_ui()
