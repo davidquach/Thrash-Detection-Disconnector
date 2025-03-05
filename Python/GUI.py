@@ -129,89 +129,104 @@ def refresh_ports():
         com_port_var.set("")  # Clear selection if no ports are available
         serial_status_label.config(text="No COM Ports Found", fg="red")
 
-# Tkinter UI Setup
+
 def create_ui():
     """ Create and configure the Tkinter UI """
-    global root, com_port_var, serial_status_label, label, status_label, canvas, ax
+    global root, com_port_var, serial_status_label, label, status_label, canvas, ax, com_port_dropdown  
 
     # Create Tkinter window
     root = Tk()
     root.title('Thrash Detection Disconnector GUI')
 
-    # Configure Grid Layout
-    root.grid_rowconfigure(0, weight=1)  # Allow plot to expand
-    root.grid_columnconfigure(1, weight=3)  # Main frame for plot
+    # Grid configuration
+    root.grid_rowconfigure(0, weight=1, minsize=100)  # Plot row will expand
+    root.grid_rowconfigure(1, weight=0)  # Status row will not expand
+    root.grid_rowconfigure(2, weight=0)  # Controls row will not expand
+    root.grid_rowconfigure(3, weight=0)  # Status row at the bottom
+
     root.grid_columnconfigure(0, weight=1)  # Sidebar frame for controls
+    root.grid_columnconfigure(1, weight=3)  # Main frame for plot
 
     # Frame for Controls (Sidebar)
-    controls_frame = Frame(root, bg='lightblue')  # Set background color
-    controls_frame.grid(row=0, column=0, sticky="ns", padx=10, pady=5)
+    controls_frame = Frame(root, bg='#E0E0E0')  # Set background color
+    controls_frame.grid(row=0, column=0, sticky="nswe", padx=10, pady=5)
+
+    controls_frame.grid_rowconfigure(0, weight=1)
+    controls_frame.grid_rowconfigure(1, weight=1)
+    controls_frame.grid_rowconfigure(2, weight=1)
+
+    controls_frame.grid_columnconfigure(0, weight=1)
+    controls_frame.grid_columnconfigure(1, weight=3)  # Ensure it takes up more space than other columns
+    controls_frame.grid_columnconfigure(2, weight=1)
+
+    status_frame = Frame(root, bg='lightgray')  # Set background color
+    status_frame.grid(row=1, column=0, sticky="nswe", padx=10, pady=5)
+
+    status_frame.grid_rowconfigure(0, weight=1)
+    status_frame.grid_rowconfigure(1, weight=1)
+    status_frame.grid_rowconfigure(2, weight=1)
+    status_frame.grid_columnconfigure(0, weight=1)
 
     # Frame for Plot
-    plot_frame = Frame(root, bg='navy')  # Set background color
-    plot_frame.grid(row=0, column=1, sticky="ns", padx=10, pady=5)
+    plot_frame = Frame(root, bg="#D3D3D3")  # Set background color
+    plot_frame.grid(row=0, column=1, rowspan=3, sticky="nsew", padx=10, pady=5)
+    plot_frame.grid_rowconfigure(0, weight=1)
+    plot_frame.grid_columnconfigure(0, weight=1)
 
     # Serial Status Label
-    serial_status_label = Label(controls_frame, text="Select a COM Port", font=("Helvetica", 12))  # Set background color
-    serial_status_label.grid(row=4, column=0, columnspan=2, sticky="ew", pady=5)
+    serial_status_label = Label(status_frame, text="Select a COM Port", font=("Helvetica", 12))  # Set background color
+    serial_status_label.grid(row=0, column=0, columnspan=1, sticky="ew", pady=5, padx=5)
 
     # Dropdown for COM port selection
     com_port_var = tk.StringVar()
     available_ports = get_available_ports()
     com_port_dropdown = ttk.Combobox(controls_frame, textvariable=com_port_var, values=available_ports, state="readonly")
-    com_port_dropdown.grid(row=0, column=0, padx=5)
+    com_port_dropdown.grid(row=0, column=2, padx=5, pady=5, sticky="ew")  # Added sticky="ew" to expand horizontally
     com_port_dropdown.bind("<<ComboboxSelected>>", select_port)
 
     # Refresh Button
     refresh_button = tk.Button(controls_frame, text="Refresh Ports", command=refresh_ports)
-    refresh_button.grid(row=0, column=1, padx=5, columnspan=2, sticky="ew")
-
-    # Call select_port after defining serial_status_label
-    if available_ports:
-        com_port_var.set(available_ports[0])
-        select_port(None)
+    refresh_button.grid(row=0, column=0, padx=5, pady=5, columnspan=2, sticky="ew")  # Added sticky="ew" to expand horizontally
 
     # Threshold Controls
-    threshold_value = tk.Entry(controls_frame, width=12)
-    threshold_value.grid(row=1, column=0, padx=0)
+    threshold_value = tk.Entry(controls_frame, width=22)
+    threshold_value.grid(row=1, column=2, padx=5, pady=5, sticky="ew")  # Added sticky="ew" to expand horizontally
     threshold_Send = tk.Button(controls_frame, text="Set Threshold", command=lambda: update_value(threshold_value, "Threshold"))
-    threshold_Send.grid(row=1, column=1, columnspan=2, padx=0, sticky="ew")
+    threshold_Send.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="ew")  # Added sticky="ew" to expand horizontally
 
     # Calibration Controls
-    calibration_value = tk.Entry(controls_frame, width=12)
-    calibration_value.grid(row=2, column=0, padx=0)
+    calibration_value = tk.Entry(controls_frame, width=22)
+    calibration_value.grid(row=2, column=2, padx=5, pady=5, sticky="ew")  # Added sticky="ew" to expand horizontally
     calibration_Send = tk.Button(controls_frame, text="Set Calibration", command=lambda: update_value(calibration_value, "Calibration"))
-    calibration_Send.grid(row=2, column=1, columnspan=2, padx=0, sticky="ew")
-
-    # Plot Control Buttons
-    plot_controls_frame = Frame(root, bg='lightgreen')  # Set background color
-    plot_controls_frame.grid(row=2, column=1, columnspan=2, sticky="ew", padx=10, pady=5)
+    calibration_Send.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="ew")  # Added sticky="ew" to expand horizontally
 
     clear_button = tk.Button(controls_frame, text="Clear Plot", command=lambda: clear_plot_data(dataList, ax))
-    clear_button.grid(row=3, column=0, padx=5, sticky="ew")
+    clear_button.grid(row=3, column=2, padx=5, pady=5, sticky="ew")  # Added sticky="ew" to expand horizontally
 
     plt_decrease_button = tk.Button(controls_frame, text="Zoom In", command=plt_decrease)
-    plt_decrease_button.grid(row=3, column=1, padx=5, sticky="ew")
+    plt_decrease_button.grid(row=3, column=1, padx=5, pady=5, sticky="ew")  # Added sticky="ew" to expand horizontally
 
     plt_increase_button = tk.Button(controls_frame, text="Zoom Out", command=plt_increase)
-    plt_increase_button.grid(row=3, column=2, padx=5, sticky="ew")
+    plt_increase_button.grid(row=3, column=0, padx=5, pady=5, sticky="ew")  # Added sticky="ew" to expand horizontally
 
     # Current Reading Label
-    label = tk.Label(controls_frame, text=f"Current Reading: {curr}", font=("Helvetica", 12, "bold"), bg='lightyellow')  # Set background color
-    label.grid(row=5, column=0, columnspan=3, sticky="ew", pady=5)
+    label = tk.Label(status_frame, text=f"Current Reading: {curr}", font=("Helvetica", 12))  
+    label.grid(row=1, column=0, columnspan=3, sticky="ew", pady=5,  padx=5)
 
     # Device Status Label
-    status_label = Label(controls_frame, text="Status: Unknown", font=("Helvetica", 12, "bold"), fg="black", bg='lightyellow')  # Set background color
-    status_label.grid(row=6, column=0, columnspan=3, sticky="ew", pady=5)
+    status_label = Label(status_frame, text="Status: Unknown", font=("Helvetica", 12, "bold"), fg="black")  
+    status_label.grid(row=2, column=0, columnspan=3, sticky="ew", pady=5, padx=5)
 
     # Matplotlib Figure
     fig = plt.Figure(figsize=(5, 4), dpi=100)
     ax = fig.add_subplot(111)
 
     # Embed Plot in Tkinter
-    canvas = FigureCanvasTkAgg(fig, root)
+    canvas = FigureCanvasTkAgg(fig, plot_frame)
     canvas_widget = canvas.get_tk_widget()
-    canvas_widget.grid(row=0, column=1, sticky="nsew", padx=10, pady=5)
+    canvas_widget.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+    fig.tight_layout()
 
     # Set up animation
     ani = animation.FuncAnimation(fig, animate, fargs=(dataList, ax, label), interval=100, save_count=50)
